@@ -56,7 +56,6 @@ extern wiced_bt_cfg_settings_t wiced_bt_cfg_settings;
  ******************************************************/
 #define MESH_PID                0x300B
 #define MESH_VID                0x0002
-#define MESH_CACHE_REPLAY_SIZE  0x0008
 
 #define MESH_LIGHT_HSL_HUE_MIN                  0
 #define MESH_LIGHT_HSL_HUE_MAX                  0xffff
@@ -79,11 +78,12 @@ static void mesh_app_init(wiced_bool_t is_provisioned);
 static uint32_t mesh_app_proc_rx_cmd(uint16_t opcode, uint8_t *p_data, uint32_t length);
 static void     mesh_app_message_handler(uint8_t element_idx, uint16_t event, void *p_data);
 static void     mesh_light_hsl_server_status_changed(uint8_t element_idx, uint8_t *p_data, uint32_t length);
-static void     mesh_light_hsl_process_set(uint8_t element_idx, wiced_bt_mesh_light_hsl_status_data_t *p_status);
+static void     mesh_light_hsl_process_status(uint8_t element_idx, wiced_bt_mesh_light_hsl_status_data_t *p_status);
 
 #ifdef HCI_CONTROL
-static void mesh_light_hsl_hci_event_send_set(wiced_bt_mesh_hci_event_t *p_hci_event, wiced_bt_mesh_light_hsl_set_t *p_data);
+static void mesh_light_hsl_hci_event_send_status(uint8_t element_idx, wiced_bt_mesh_light_hsl_status_data_t* p_data);
 #endif
+
 
 /******************************************************
  *          Variables Definitions
@@ -229,7 +229,6 @@ wiced_bt_mesh_core_config_t  mesh_config =
     .company_id         = MESH_COMPANY_ID_CYPRESS,                  // Company identifier assigned by the Bluetooth SIG
     .product_id         = MESH_PID,                                 // Vendor-assigned product identifier
     .vendor_id          = MESH_VID,                                 // Vendor-assigned product version identifier
-    .replay_cache_size  = MESH_CACHE_REPLAY_SIZE,                   // Number of replay protection entries, i.e. maximum number of mesh devices that can send application messages to this device.
 #if defined(LOW_POWER_NODE) && (LOW_POWER_NODE == 1)
     .features           = WICED_BT_MESH_CORE_FEATURE_BIT_LOW_POWER, // A bit field indicating the device features. In Low Power mode no Relay, no Proxy and no Friend
     .friend_cfg         =                                           // Empty Configuration of the Friend Feature
@@ -340,12 +339,8 @@ void mesh_app_message_handler(uint8_t element_idx, uint16_t event, void *p_data)
 
     switch (event)
     {
-    case WICED_BT_MESH_LIGHT_HSL_SET:
-#if defined HCI_CONTROL
-//        if ((p_hci_event = wiced_bt_mesh_create_hci_event(p_event)) != NULL)
-//            mesh_light_hsl_hci_event_send_set(p_hci_event, (wiced_bt_mesh_light_hsl_status_data_t *)p_data);
-#endif
-        mesh_light_hsl_process_set(element_idx, (wiced_bt_mesh_light_hsl_status_data_t *)p_data);
+    case WICED_BT_MESH_LIGHT_HSL_STATUS:
+        mesh_light_hsl_process_status(element_idx, (wiced_bt_mesh_light_hsl_status_data_t *)p_data);
         break;
 
     default:
@@ -395,27 +390,34 @@ void mesh_light_hsl_server_status_changed(uint8_t element_idx, uint8_t *p_data, 
 /*
  * Command from the HSL, Lightness, Generic Level or On/Off client received to set the new level
  */
-void mesh_light_hsl_process_set(uint8_t element_idx, wiced_bt_mesh_light_hsl_status_data_t *p_status)
+void mesh_light_hsl_process_status(uint8_t element_idx, wiced_bt_mesh_light_hsl_status_data_t *p_status)
 {
     WICED_BT_TRACE("light hsl srv set present light:%d hue:%d sat:%d remaining time:%d\n",
             p_status->present.lightness, p_status->present.hue, p_status->present.saturation, p_status->remaining_time);
+
+#if defined HCI_CONTROL
+    mesh_light_hsl_hci_event_send_status(element_idx, (wiced_bt_mesh_light_hsl_status_data_t*)p_status);
+#endif
 }
 
 #ifdef HCI_CONTROL
 /*
- * Send List HSL Set event over transport
+ * Send Ligt HSL Status event over transport
  */
-void mesh_light_hsl_hci_event_send_set(wiced_bt_mesh_hci_event_t *p_hci_event, wiced_bt_mesh_light_hsl_set_t *p_data)
+void mesh_light_hsl_hci_event_send_status(uint8_t element_idx, wiced_bt_mesh_light_hsl_status_data_t* p_data)
+{
+    wiced_bt_mesh_hci_event_t* p_hci_event = wiced_bt_mesh_alloc_hci_event(element_idx);
+    if (p_hci_event)
 {
     uint8_t *p = p_hci_event->data;
 
-    UINT16_TO_STREAM(p, p_data->target.lightness);
-    UINT16_TO_STREAM(p, p_data->target.hue);
-    UINT16_TO_STREAM(p, p_data->target.saturation);
-    UINT32_TO_STREAM(p, p_data->transition_time);
-    UINT16_TO_STREAM(p, p_data->delay);
+        UINT16_TO_STREAM(p, p_data->present.lightness);
+        UINT16_TO_STREAM(p, p_data->present.hue);
+        UINT16_TO_STREAM(p, p_data->present.saturation);
+        UINT32_TO_STREAM(p, p_data->remaining_time);
 
-    mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_LIGHT_HSL_SET, (uint8_t *)p_hci_event, (uint16_t)(p - (uint8_t *)p_hci_event));
+        mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_LIGHT_HSL_STATUS, (uint8_t*)p_hci_event, (uint16_t)(p - (uint8_t*)p_hci_event));
+    }
 }
 
 #endif
